@@ -495,15 +495,20 @@ namespace NeonTAS {
         }
 
         public static void OnLevelStart_ReplaySetup() {
-            frame_idx = 0;
-            buffer = new InputBuffer();
             string path = GetFilePath();
             string filename = "active.TAS";
             path = path + Path.DirectorySeparatorChar.ToString() + filename;
-            string inputs = File.ReadAllText(path);
-            Console.Write("Read inputs from " + path);
 
-            buffer.ParseString(inputs);
+            if (File.Exists(path)) {
+                string inputs = File.ReadAllText(path);
+                Console.Write("Read inputs from " + path);
+                frame_idx = 0;
+                buffer = new InputBuffer();
+                buffer.ParseString(inputs);
+            } else {
+                Console.Write("No file found at [" + path + "]. Unhooking input replaying.");
+                UnpatchInputMethods();
+            }
         }
 
         public static void OnLevelWin_RecordingFinish() {
