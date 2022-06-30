@@ -302,10 +302,16 @@ namespace NeonTAS {
         public static float time_delta = 0f;
 
         public override void OnFixedUpdate() {
-            // check if enabled, if patches attached/etc
-            // need to figure out first frame stuff
+            // TODO: add preference for logging inputs at 60Hz; figure out how to write that to file safely
+            // possibly {level_name}-{timestamp}.TAS?
+
+            // just gate the input feed actions on if the input methods are patched
+            // This seems to stop ticking when the pause menu/etc is up...
+            // I think that means we don't have to think about first frame?
             if (input_methods_patched) {
-                time_delta = Time.fixedDeltaTime;
+                // sample "messing with setting inputs per-frame"
+                // would ideally be using frame_idx with a huge array
+                // time_delta = Time.fixedDeltaTime;
                 frame_inputX = 0f;
                 frame_inputY = 1f;
                 if (frame_idx % 240 == 0) {
@@ -319,8 +325,7 @@ namespace NeonTAS {
                 ++frame_idx;
             }
 
-
-            // note: should have a keyword/action for 'pause game and hand back input control to user'
+            // note: should have a keyword/action for 'pause game and hand back input control to user
             // this should also load the 'record inputs' hook / set that to load on game unpause
         }
 
@@ -361,7 +366,7 @@ namespace NeonTAS {
 
         public override void OnGUI() {
             if (!RM.mechController || !RM.drifter) return;
-            if (/*input_methods_patched &&*/ debug_text.Value) {
+            if (debug_text.Value) {
                 int local_y_offset = y_offset.Value;
                 DrawText(x_offset.Value, local_y_offset, "Frame #" + frame_idx.ToString() + " (" + time_delta.ToString("N4") + "s)", Color.magenta);
                 local_y_offset += font_size.Value + 2;
