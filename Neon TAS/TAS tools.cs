@@ -209,6 +209,8 @@ namespace NeonTAS {
         public static MelonPreferences_Entry<bool> copy_replay_filename_to_clipboard;
         public static MelonPreferences_Entry<bool> recording_enabled;
 
+        public static MelonPreferences_Entry<float> timescale;
+
         public static MelonPreferences_Entry<bool> debug_text;
         public static MelonPreferences_Entry<int> x_offset;
         public static MelonPreferences_Entry<int> y_offset;
@@ -252,6 +254,22 @@ namespace NeonTAS {
 
 
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
+            // replaying requires level start/finish patches that hook/unhook input method patches
+            // recording requires level start/finish patches that just handle recording state
+
+            recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
+            copy_replay_filename_to_clipboard = tas_config.CreateEntry("Copy replay filename to clipboard", false);
+
+            replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
+            replay_filename = tas_config.CreateEntry("Replay filename to load", "active.TAS");
+
+            timescale = tas_config.CreateEntry("Timescale", 1f);
+
+            debug_text = tas_config.CreateEntry("Debug text", false);
+            x_offset = tas_config.CreateEntry("X Offset", 30);
+            y_offset = tas_config.CreateEntry("Y Offset", 30);
+            font_size = tas_config.CreateEntry("Font Size", 20);
+
             misc_debug_shit = MelonPreferences.CreateCategory("Misc. Debug");
             debug_disable_enemy_ai = misc_debug_shit.CreateEntry("DEBUG: disable enemy AI", false);
             disable_barnacle = misc_debug_shit.CreateEntry("Disable 'Barnacle' (basic imp)", true);
@@ -267,25 +285,28 @@ namespace NeonTAS {
             disable_boxer = misc_debug_shit.CreateEntry("Disable 'boxer'?", true);
             disable_roller = misc_debug_shit.CreateEntry("Disable 'roller'?", true);
 
-            // replaying requires level start/finish patches that hook/unhook input method patches
-            // recording requires level start/finish patches that just handle recording state
-
-            recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
-            copy_replay_filename_to_clipboard = tas_config.CreateEntry("Copy replay filename to clipboard", false);
-
-            replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
-            replay_filename = tas_config.CreateEntry("Replay filename to load", "active.TAS");
-
-            debug_text = tas_config.CreateEntry("Debug text", false);
-            x_offset = tas_config.CreateEntry("X Offset", 30);
-            y_offset = tas_config.CreateEntry("Y Offset", 30);
-            font_size = tas_config.CreateEntry("Font Size", 20);
-
             if (replay_enabled.Value || recording_enabled.Value) {
                 PatchLevelMethods();
             }
             if (debug_disable_enemy_ai.Value) {
                 DisableEnemyAi();
+            }
+            Time.timeScale = timescale.Value;
+        }
+        public override void OnPreferencesSaved() {
+            Time.timeScale = timescale.Value;
+            if (level_hook_methods_patched && !(replay_enabled.Value || recording_enabled.Value)) {
+                UnpatchLevelMethods();
+            } else if (replay_enabled.Value || recording_enabled.Value) {
+                PatchLevelMethods();
+            }
+            if (input_write_methods_patched && !replay_enabled.Value) {
+                UnpatchInputMethods();
+            }
+            if (debug_disable_enemy_ai.Value) {
+                DisableEnemyAi();
+            } else {
+                EnableEnemyAi();
             }
         }
 
@@ -351,22 +372,6 @@ namespace NeonTAS {
             if (enemies_patched) {
                 enemy_patch_instance.UnpatchSelf();
                 enemies_patched = false;
-            }
-        }
-
-        public override void OnPreferencesSaved() {
-            if (level_hook_methods_patched && !(replay_enabled.Value || recording_enabled.Value)) {
-                UnpatchLevelMethods();
-            } else if (replay_enabled.Value || recording_enabled.Value) {
-                PatchLevelMethods();
-            }
-            if (input_write_methods_patched && !replay_enabled.Value) {
-                UnpatchInputMethods();
-            }
-            if (debug_disable_enemy_ai.Value) {
-                DisableEnemyAi();
-            } else {
-                EnableEnemyAi();
             }
         }
 
