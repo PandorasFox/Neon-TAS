@@ -205,7 +205,11 @@ namespace NeonTAS {
         public static MelonPreferences_Category tas_config;
 
         public static MelonPreferences_Entry<bool> replay_enabled;
+        public static MelonPreferences_Entry<string> replay_filename;
+        public static MelonPreferences_Entry<bool> copy_replay_filename_to_clipboard;
         public static MelonPreferences_Entry<bool> recording_enabled;
+
+
         public static MelonPreferences_Entry<bool> debug_text;
         public static MelonPreferences_Entry<int> x_offset;
         public static MelonPreferences_Entry<int> y_offset;
@@ -223,6 +227,8 @@ namespace NeonTAS {
             // recording requires level start/finish patches that just handle recording state
 
             replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
+            replay_filename = tas_config.CreateEntry("Replay filename to load", "active.TAS");
+            copy_replay_filename_to_clipboard = tas_config.CreateEntry("Copy replay filename to clipboard", false);
             recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
 
             debug_text = tas_config.CreateEntry("Debug text", false);
@@ -511,6 +517,9 @@ namespace NeonTAS {
         public static void OnLevelStart_ReplaySetup() {
             string path = GetFilePath();
             string filename = "active.TAS";
+            if (replay_filename.Value != "") {
+                filename = replay_filename.Value;
+            }
             path = path + Path.DirectorySeparatorChar.ToString() + filename;
 
             if (File.Exists(path)) {
@@ -571,6 +580,10 @@ namespace NeonTAS {
             path = path + Path.DirectorySeparatorChar.ToString() + filename;
             // [ghosts folder]/[level name]/[frame count]_[timestamp].TAS
             File.WriteAllText(path, inputs);
+            // copy filename to clipboard.
+            if (copy_replay_filename_to_clipboard.Value) {
+                GUIUtility.systemCopyBuffer = filename;
+            }
             debug_string_to_write += "Recorded inputs to " + path + "\n";
         }
 
@@ -662,6 +675,9 @@ namespace NeonTAS {
 
         public override void OnFixedUpdate() {
             // gate the input feed actions on if the input methods are patched
+
+            // note: maybe have a config value for a specific frame_idx to trigger the pause->hand over control on?
+
             if (replay_enabled.Value && input_write_methods_patched && buffer != null) {
                 ReplayInputs();
             } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
