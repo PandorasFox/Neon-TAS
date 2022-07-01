@@ -209,14 +209,27 @@ namespace NeonTAS {
         public static MelonPreferences_Entry<bool> copy_replay_filename_to_clipboard;
         public static MelonPreferences_Entry<bool> recording_enabled;
 
-
-        public static MelonPreferences_Entry<bool> debug_disable_enemy_ai;
-
-
         public static MelonPreferences_Entry<bool> debug_text;
         public static MelonPreferences_Entry<int> x_offset;
         public static MelonPreferences_Entry<int> y_offset;
         public static MelonPreferences_Entry<int> font_size;
+
+        public static MelonPreferences_Category misc_debug_shit;
+        public static MelonPreferences_Entry<bool> debug_disable_enemy_ai;
+
+        public static MelonPreferences_Entry<bool> disable_frog;
+        public static MelonPreferences_Entry<bool> disable_jock;
+        public static MelonPreferences_Entry<bool> disable_jumper;
+        public static MelonPreferences_Entry<bool> disable_guardian;
+        public static MelonPreferences_Entry<bool> disable_ringer;
+        public static MelonPreferences_Entry<bool> disable_shocker;
+        public static MelonPreferences_Entry<bool> disable_mimic;
+
+        public static MelonPreferences_Entry<bool> disable_barnacle;
+        public static MelonPreferences_Entry<bool> disable_ufo;
+        public static MelonPreferences_Entry<bool> disable_boxer;
+        public static MelonPreferences_Entry<bool> disable_roller;
+
 
         public static bool prior_dont_upload_val;
         public static bool level_hook_methods_patched = false;
@@ -239,6 +252,20 @@ namespace NeonTAS {
 
 
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
+            misc_debug_shit = MelonPreferences.CreateCategory("Misc. Debug");
+            debug_disable_enemy_ai = misc_debug_shit.CreateEntry("DEBUG: disable enemy AI", false);
+            disable_barnacle = misc_debug_shit.CreateEntry("Disable 'Barnacle' (basic imp)", true);
+            disable_frog = misc_debug_shit.CreateEntry("Disable Frog (yellow)", true);
+            disable_jock = misc_debug_shit.CreateEntry("Disable Jock (blue)", true);
+            disable_jumper = misc_debug_shit.CreateEntry("Disable Jumper (green)", true);
+            disable_guardian = misc_debug_shit.CreateEntry("Disable Guardian", true);
+            disable_ringer = misc_debug_shit.CreateEntry("Disable Ringer (blob)", true);
+            disable_shocker = misc_debug_shit.CreateEntry("Disable Shocker", true);
+            disable_mimic = misc_debug_shit.CreateEntry("Disable Mimic", true);
+
+            disable_ufo = misc_debug_shit.CreateEntry("Disable 'ufo'?", true);
+            disable_boxer = misc_debug_shit.CreateEntry("Disable 'boxer'?", true);
+            disable_roller = misc_debug_shit.CreateEntry("Disable 'roller'?", true);
 
             // replaying requires level start/finish patches that hook/unhook input method patches
             // recording requires level start/finish patches that just handle recording state
@@ -248,8 +275,6 @@ namespace NeonTAS {
 
             replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
             replay_filename = tas_config.CreateEntry("Replay filename to load", "active.TAS");
-
-            debug_disable_enemy_ai = tas_config.CreateEntry("DEBUG: disable enemy AI", false);
 
             debug_text = tas_config.CreateEntry("Debug text", false);
             x_offset = tas_config.CreateEntry("X Offset", 30);
@@ -267,22 +292,58 @@ namespace NeonTAS {
         public static bool enemies_patched = false;
         static HarmonyLib.Harmony enemy_patch_instance = new HarmonyLib.Harmony("enemies");
 
-        class GuardianAI_Patch {
+        class EnemyAI_Patch {
             [HarmonyPatch(typeof(Enemy), "OnUpdate")]
             [HarmonyPrefix]
+            // the preference is for "disable", e.g. true == no AI
+            // returning true will make enemy .OnUpdate() still tick for that type.
+            // so, we need to return !value
             static bool BlockEnemyAI(Enemy __instance) {
-                if (__instance.GetEnemyType() != Enemy.Type.shocker) {
-                    // block AI for everyone but shockers :)
-                    return false;
+                switch(__instance.GetEnemyType()) {
+                    case Enemy.Type.shocker: {
+                        return !disable_shocker.Value;
+                    }
+                    case Enemy.Type.barnacle: {
+                        return !disable_barnacle.Value;
+                    }
+                    case Enemy.Type.frog: {
+                        return !disable_frog.Value;
+                    }
+                    case Enemy.Type.jock: {
+                        return !disable_jock.Value;
+                    }
+                    case Enemy.Type.jumper: {
+                        return !disable_jumper.Value;
+                    }
+                    case Enemy.Type.guardian: {
+                        return !disable_guardian.Value;
+                    }
+                    case Enemy.Type.ringer: {
+                        return !disable_ringer.Value;
+                    }
+                    case Enemy.Type.mimic: {
+                        return !disable_mimic.Value;
+                    }
+                    case Enemy.Type.ufo: {
+                        return !disable_ufo.Value;
+                    }
+                    case Enemy.Type.boxer: {
+                        return !disable_boxer.Value;
+                    }
+                    case Enemy.Type.roller: {
+                        return !disable_mimic.Value;
+                    }
+                    default: {
+                        // fallback: who is still enabled?
+                        return true;
+                    }
                 }
-                // let the shocky boys do their thing :)
-                return true;
             }
         }
 
         public void DisableEnemyAi() {
             if (!enemies_patched) {
-                enemy_patch_instance.PatchAll(typeof(GuardianAI_Patch));
+                enemy_patch_instance.PatchAll(typeof(EnemyAI_Patch));
                 enemies_patched = true;
             }
         }
