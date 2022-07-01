@@ -210,6 +210,9 @@ namespace NeonTAS {
         public static MelonPreferences_Entry<bool> recording_enabled;
 
 
+        public static MelonPreferences_Entry<bool> debug_disable_enemy_ai;
+
+
         public static MelonPreferences_Entry<bool> debug_text;
         public static MelonPreferences_Entry<int> x_offset;
         public static MelonPreferences_Entry<int> y_offset;
@@ -240,10 +243,13 @@ namespace NeonTAS {
             // replaying requires level start/finish patches that hook/unhook input method patches
             // recording requires level start/finish patches that just handle recording state
 
+            recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
+            copy_replay_filename_to_clipboard = tas_config.CreateEntry("Copy replay filename to clipboard", false);
+
             replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
             replay_filename = tas_config.CreateEntry("Replay filename to load", "active.TAS");
-            copy_replay_filename_to_clipboard = tas_config.CreateEntry("Copy replay filename to clipboard", false);
-            recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
+
+            debug_disable_enemy_ai = tas_config.CreateEntry("DEBUG: disable enemy AI", false);
 
             debug_text = tas_config.CreateEntry("Debug text", false);
             x_offset = tas_config.CreateEntry("X Offset", 30);
@@ -252,6 +258,38 @@ namespace NeonTAS {
 
             if (replay_enabled.Value || recording_enabled.Value) {
                 PatchLevelMethods();
+            }
+            if (debug_disable_enemy_ai.Value) {
+                DisableEnemyAi();
+            }
+        }
+
+        public static bool enemies_patched = false;
+        static HarmonyLib.Harmony enemy_patch_instance = new HarmonyLib.Harmony("enemies");
+
+        class GuardianAI_Patch {
+            [HarmonyPatch(typeof(Enemy), "OnUpdate")]
+            [HarmonyPrefix]
+            static bool BlockEnemyAI(Enemy __instance) {
+                if (__instance.GetEnemyType() != Enemy.Type.shocker) {
+                    // block AI for everyone but shockers :)
+                    return false;
+                }
+                // let the shocky boys do their thing :)
+                return true;
+            }
+        }
+
+        public void DisableEnemyAi() {
+            if (!enemies_patched) {
+                enemy_patch_instance.PatchAll(typeof(GuardianAI_Patch));
+                enemies_patched = true;
+            }
+        }
+        public void EnableEnemyAi() {
+            if (enemies_patched) {
+                enemy_patch_instance.UnpatchSelf();
+                enemies_patched = false;
             }
         }
 
@@ -263,6 +301,11 @@ namespace NeonTAS {
             }
             if (input_write_methods_patched && !replay_enabled.Value) {
                 UnpatchInputMethods();
+            }
+            if (debug_disable_enemy_ai.Value) {
+                DisableEnemyAi();
+            } else {
+                EnableEnemyAi();
             }
         }
 
@@ -323,11 +366,10 @@ namespace NeonTAS {
             }
         }
 
-        static HarmonyLib.Harmony input_patches_instance;
+        static HarmonyLib.Harmony input_patches_instance = new HarmonyLib.Harmony("Inputs");
 
         private static void PatchInputMethods() {
             if (!input_write_methods_patched) {
-                input_patches_instance = new HarmonyLib.Harmony("Inputs");
                 input_patches_instance.PatchAll(typeof(GameInputPatches));
                 input_write_methods_patched = true;
             }
@@ -466,7 +508,7 @@ namespace NeonTAS {
             }
         }
 
-        public static InputBuffer buffer;
+        public static InputBuffer buffer = null;
         public static int frame_idx = 0;
 
         public static float frame_inputX = 0f;
@@ -529,6 +571,10 @@ namespace NeonTAS {
         }
 
         public static void OnLevelStart_ReplaySetup() {
+            frame_idx = 0;
+            buffer = new InputBuffer();
+            last_tick = null;
+
             string path = GetFilePath();
             string filename = "active.TAS";
             if (replay_filename.Value != "") {
@@ -539,14 +585,13 @@ namespace NeonTAS {
             if (File.Exists(path)) {
                 string inputs = File.ReadAllText(path);
                 MelonLogger.Msg("Read inputs from " + path + "\n");
-                frame_idx = 0;
-                buffer = new InputBuffer();
+
                 buffer.ParseString(inputs);
                 delayed_record = false;
             } else {
                 MelonLogger.Msg("No file found at [" + path + "]. Unhooking input replaying.\n");
                 UnpatchInputMethods();
-                delayed_record = true;
+                delayed_record = true;;
             }
         }
 
@@ -560,6 +605,7 @@ namespace NeonTAS {
             if (inputs != "") {
                 WriteStringToFile(inputs);
             } // surely this is never false
+            buffer = null;
         }
 
         public static string GetFilePath() {
@@ -604,6 +650,7 @@ namespace NeonTAS {
         static InputBuffer.InputTick last_tick = null;
 
         public void ReplayInputs() {
+            if (buffer == null) return;
             InputBuffer.InputTick tick = buffer.Get(frame_idx); // nullable!
             if (tick == null) {
                 // do not adjust x_move_axis or y_move_axis
@@ -647,6 +694,7 @@ namespace NeonTAS {
         }
 
         public void RecordInputs() {
+            if (buffer == null) return;
             InputBuffer.InputTick tick = new InputBuffer.InputTick();
             InputBuffer.InputTick last_tick = buffer.Get(frame_idx - 1); // nullable!
             tick.idx = frame_idx;
@@ -683,7 +731,7 @@ namespace NeonTAS {
 
             // note: maybe have a config value for a specific frame_idx to trigger the pause->hand over control on?
 
-            if (replay_enabled.Value && input_write_methods_patched && buffer != null) {
+            if (replay_enabled.Value && input_write_methods_patched) {
                 ReplayInputs();
             } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
                 RecordInputs();
