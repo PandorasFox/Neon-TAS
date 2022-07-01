@@ -21,7 +21,7 @@ namespace NeonTAS {
             public float? y_move_axis;
             
             public float? face_direction; // -360 -> +360
-            public float? face_angle; // -85 -> 85
+            public float? face_angle; // -90 -> 90
 
             public bool jump;
             public bool fire;
@@ -40,6 +40,11 @@ namespace NeonTAS {
 
                 jump = swap = fire = discard = restart = pause_and_unhook = false;
             }
+
+            // in place of a 5-digit frame index, a ----- indicates it's just the next frame
+            // should be handy if you need to delete a frame of input
+            public static string FRAME_NEXT_PREFIX = "----->";
+
             public static InputTick FromString(string s) {
                 InputTick ret = new InputTick();
 
@@ -64,7 +69,13 @@ namespace NeonTAS {
                 }
 
                 if (frame != "")
-                    ret.idx = int.Parse(frame);
+                    if (frame == "----->") {
+                        // ret.idx is just 'next index'
+                        // we percolate this back up by setting idx to int.MinValue :)))
+                        ret.idx = int.MinValue; //this is the worst thing i will ever do
+                    } else {
+                        ret.idx = int.Parse(frame);
+                    }
                 if (inputs != "") {
                     parts = inputs.Split('|');
                 } else {
@@ -119,13 +130,21 @@ namespace NeonTAS {
 
                 return ret;
             }
-            public override string ToString() {
+            public string ToString(bool print_frame = true) {
+                if (idx == -1) {
+                    return FRAME_NEXT_PREFIX;
+                }
                 if (x_move_axis == null && y_move_axis == null && face_direction == null && face_angle == null &&
                     !(jump || fire || discard || swap || restart || pause_and_unhook)) {
-                    return "";
+                    return FRAME_NEXT_PREFIX;
                 }
                 // print frame#, padded to 5 digits for uniformity :)
-                string ret = idx.ToString("D5") + ">";
+                string ret = "";
+                if (print_frame) {
+                    ret += idx.ToString("D5") + ">";
+                } else {
+                    ret += FRAME_NEXT_PREFIX; // means "+1 frame from last"
+                }
                 if (x_move_axis != null) {
                     ret += x_move_axis.ToString();
                 }
@@ -173,6 +192,11 @@ namespace NeonTAS {
         }
 
         public bool Write(InputTick t) {
+            if (t.idx == int.MinValue) {
+                // this was an "unnumbered frame" composed of "----->" to indicate that
+                // its frame index is just the last one +1
+                t.idx = max_frame_idx + 1;
+            }
             if (t.idx >= 0 && t.idx < size) {
                 if (t.idx > max_frame_idx) {
                     max_frame_idx = t.idx;
@@ -191,7 +215,12 @@ namespace NeonTAS {
         }
 
         public void ParseString(string inputs) {
-
+            foreach (var line in inputs.Split('\n')) {
+                InputTick tick = InputTick.FromString(line);
+                if (tick != null) {
+                    this.Write(tick);
+                }
+            }
         }
     }
 
@@ -200,7 +229,6 @@ namespace NeonTAS {
 
         public static MelonPreferences_Entry<bool> replay_enabled;
         public static MelonPreferences_Entry<bool> recording_enabled;
-        public static MelonPreferences_Entry<string> recording_path;
         public static MelonPreferences_Entry<bool> debug_text;
         public static MelonPreferences_Entry<int> x_offset;
         public static MelonPreferences_Entry<int> y_offset;
@@ -216,12 +244,9 @@ namespace NeonTAS {
 
             // replaying requires level start/finish patches that hook/unhook input method patches
             // recording requires level start/finish patches that just handle recording state
-            // :thinking:
-            // doing a bunch of Shit around which hooks to apply sucks. let's just have the hooks figure out which one to do :)
 
             replay_enabled = tas_config.CreateEntry("Replaying Enabled", false);
             recording_enabled = tas_config.CreateEntry("Recording Enabled (if not replaying)", false);
-            recording_path = tas_config.CreateEntry("Path to save inputs to", "fuck, man, idk.");
 
             debug_text = tas_config.CreateEntry("Debug text", false);
             x_offset = tas_config.CreateEntry("X Offset", 30);
@@ -234,11 +259,13 @@ namespace NeonTAS {
         }
 
         public override void OnPreferencesSaved() {
-            // if (patched) && !(replay || record)
             if (level_hook_methods_patched && !(replay_enabled.Value || recording_enabled.Value)) {
                 UnpatchLevelMethods();
             } else if (replay_enabled.Value || recording_enabled.Value) {
                 PatchLevelMethods();
+            }
+            if (input_write_methods_patched && !replay_enabled.Value) {
+                UnpatchInputMethods();
             }
         }
 
@@ -281,7 +308,7 @@ namespace NeonTAS {
             [HarmonyPatch(typeof(Game), "OnLevelWin")]
             [HarmonyPrefix]
             static void OnWin_Unhook_path() {
-                if (replay_enabled.Value) {
+                if (replay_enabled.Value && !delayed_record) {
                     UnpatchInputMethods();
                 } else if (recording_enabled.Value) {
                     OnLevelWin_RecordingFinish();
@@ -291,7 +318,11 @@ namespace NeonTAS {
             [HarmonyPatch(typeof(FirstPersonDrifter), "OnPlayerDie")]
             [HarmonyPrefix]
             static void OnDeath_Unhook_Patch() {
-                UnpatchInputMethods();
+                if (replay_enabled.Value && !delayed_record) {
+                    UnpatchInputMethods();
+                } else if (recording_enabled.Value) {
+                    OnLevelWin_RecordingFinish();
+                }
             }
         }
 
@@ -355,6 +386,8 @@ namespace NeonTAS {
                 }
             }
 
+            [HarmonyPatch(typeof(GameInput), "GetButton")]
+            [HarmonyPrefix]
             static bool InjectButtonInputs(ref bool __result, GameInput.GameActions button, GameInput.InputType inputType = GameInput.InputType.Game) {
                 if (inputType != GameInput.InputType.Game) {
                     return true;
@@ -379,8 +412,10 @@ namespace NeonTAS {
                     default: return true;
                 }
             }
+
             [HarmonyPatch(typeof(GameInput), "GetButtonDown")]
             [HarmonyPrefix]
+            // returns True on first frame pressed, but not if pressed last frame
             static bool InjectButtonDownInputs(ref bool __result, GameInput.GameActions button, GameInput.InputType inputType = GameInput.InputType.Game) {
                 if (inputType != GameInput.InputType.Game) {
                     return true;
@@ -439,6 +474,8 @@ namespace NeonTAS {
 
         public static float frame_inputX = 0f;
         public static float frame_inputY = 0f;
+        public static float frame_lookX = 0f;
+        public static float frame_lookY = 0f;
 
         public static bool frame_jump_pressed;
         public static bool last_frame_jump_pressed;
@@ -453,6 +490,8 @@ namespace NeonTAS {
         public static bool last_frame_restart_pressed;
 
         public static bool frame_swap_card;
+
+        public static bool delayed_record = false;
 
         public void setJump(bool v) {
             last_frame_jump_pressed = frame_jump_pressed;
@@ -476,21 +515,19 @@ namespace NeonTAS {
 
         public void setRotation(float? x, float? y) {
             if (x.HasValue) {
-                float clamped_x = Mathf.Clamp(x.Value, -360, 360);
+                float clamped_x = x.Value % 360;
                 RM.drifter.mouseLookX.SetRotationX(clamped_x);
 
             }
             if (y.HasValue) {
-                float clamped_y = Mathf.Clamp(y.Value, -85, 85);
+                float clamped_y = y.Value % 360;
                 RM.drifter.mouseLookY.SetRotationY(clamped_y);
             }
         }
 
-        // need to make a thicc array to record inputs into
-        // 60tps, 5m would be 300*60->18000 input frames :think:
-
         public static void OnLevelStart_RecordSetup() {
             frame_idx = 0;
+            last_tick = null;
             buffer = new InputBuffer();
         }
 
@@ -501,22 +538,33 @@ namespace NeonTAS {
 
             if (File.Exists(path)) {
                 string inputs = File.ReadAllText(path);
-                Console.Write("Read inputs from " + path);
+                debug_string_to_write += "Read inputs from " + path + "\n";
                 frame_idx = 0;
                 buffer = new InputBuffer();
                 buffer.ParseString(inputs);
+                delayed_record = false;
             } else {
-                Console.Write("No file found at [" + path + "]. Unhooking input replaying.");
+                debug_string_to_write += "No file found at [" + path + "]. Unhooking input replaying.\n";
                 UnpatchInputMethods();
+                delayed_record = true;
             }
         }
 
         public static void OnLevelWin_RecordingFinish() {
+            // bad code.
             string inputs = "";
+            int prior_idx = -1;
             for (int i = 0; i < buffer.NumFrames(); i++) {
                 InputBuffer.InputTick tick = buffer.Get(i);
-                if (tick != null && tick.ToString() != "") {
-                    inputs += tick.ToString() + "\n";
+                if (tick != null) {
+                    if (prior_idx == -1) {
+                        inputs += tick.ToString() + "\n";
+                    } else {
+                        inputs += tick.ToString(false) + "\n";
+                    }
+                    prior_idx = tick.idx;
+                } else {
+                    prior_idx = -1;
                 }
             }
             if (inputs != "") {
@@ -556,34 +604,68 @@ namespace NeonTAS {
             path = path + Path.DirectorySeparatorChar.ToString() + filename;
             // [ghosts folder]/[level name]/[frame count]_[timestamp].TAS
             File.WriteAllText(path, inputs);
-            Console.Write("Recorded inputs to " + path);
+            debug_string_to_write += "Recorded inputs to " + path + "\n";
         }
+
+        public static string debug_string_to_write = "";
+
+        public override void OnUpdate() {
+            if (debug_string_to_write != "") {
+                LoggerInstance.Msg(debug_string_to_write);
+                debug_string_to_write = "";
+            }
+        }
+
+        static InputBuffer.InputTick last_tick = null;
 
         public override void OnFixedUpdate() {
             // just gate the input feed actions on if the input methods are patched
-            if (replay_enabled.Value && input_write_methods_patched) {
-                InputBuffer.InputTick tick = buffer.Get(frame_idx);
-                if (tick.x_move_axis != null) {
-                    frame_inputX = tick.x_move_axis.Value;
-                }
-                if (tick.y_move_axis != null) {
-                    frame_inputY = tick.y_move_axis.Value;
-                }
-                if (tick.face_direction != null || tick.face_angle != null) {
-                    setRotation(tick.face_direction, tick.face_angle);
-                }
+            if (replay_enabled.Value && input_write_methods_patched && buffer != null) {
+                InputBuffer.InputTick tick = buffer.Get(frame_idx); // nullable!
+                if (tick == null) {
+                    // do not adjust x_move_axis or y_move_axis
+                    setRotation(frame_lookX, frame_lookY);
+                    setJump(false);
+                    setFire(false);
+                    setDiscard(false);
+                    frame_swap_card = false;
+                    setRestart(false);
+                } else {
+                    if (frame_idx < 10 && tick != null) {
+                        LoggerInstance.Msg("replaying tick" + tick.ToString());
+                    }
+                    if (tick.x_move_axis != null) {
+                        frame_inputX = tick.x_move_axis.Value;
+                    }
+                    if (tick.y_move_axis != null) {
+                        frame_inputY = tick.y_move_axis.Value;
+                    }
+                    if (tick.face_direction != null) {
+                        frame_lookX = tick.face_direction.Value;
+                    }
+                    if (tick.face_angle != null) {
+                        frame_lookY = tick.face_angle.Value;
+                    }
+                    // setrotation every frame, so that if we somehow miss a frame we still try and set correctly again
+                    // is that really how it works or was it just that our flick lands a frame too early sometimes :think:
+                    setRotation(frame_lookX, frame_lookY);
 
-                setJump(tick.jump);
-                setFire(tick.fire);
-                setDiscard(tick.discard);
-                frame_swap_card = tick.swap;
-                setRestart(tick.restart);
-                if (tick.pause_and_unhook) {
-                    UnpatchInputMethods();
-                    MainMenu.Instance().PauseGame(true, true, true);
+                    // WHY IS SETJUMP NOT WORKING ANYMORE
+                    setJump(tick.jump);
+                    setFire(tick.fire);
+                    setDiscard(tick.discard);
+                    frame_swap_card = tick.swap;
+                    setRestart(tick.restart);
+                    if (tick.pause_and_unhook) {
+                        UnpatchInputMethods();
+                        MainMenu.Instance().PauseGame(true, true, true);
+                        delayed_record = true;
+                        LoggerInstance.Msg("Unpatched methods and handed back control *on* frame " + frame_idx.ToString());
+                    }
                 }
-                // is this really all i need to do :think:
-            } else if (recording_enabled.Value) {
+                last_tick = tick;
+                // will gating against replayEnabled here prevent the mystery Null References
+            } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value && RM.drifter) {
                 InputBuffer.InputTick tick = new InputBuffer.InputTick();
                 InputBuffer.InputTick last_tick= buffer.Get(frame_idx - 1); // nullable!
                 tick.idx = frame_idx;
@@ -600,13 +682,19 @@ namespace NeonTAS {
                     if (last_tick.face_angle == tick.face_angle) tick.face_angle = null;
                 }
 
-                tick.fire = Singleton<GameInput>.Instance.GetButtonDown(GameInput.GameActions.FireCard, GameInput.InputType.Game);
-                tick.discard = Singleton<GameInput>.Instance.GetButtonDown(GameInput.GameActions.FireCardAlt, GameInput.InputType.Game);
-                tick.jump = Singleton<GameInput>.Instance.GetButtonDown(GameInput.GameActions.Jump, GameInput.InputType.Game);
+                
+                tick.fire = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCard, GameInput.InputType.Game);
+                tick.discard = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCardAlt, GameInput.InputType.Game);
+                tick.jump = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.Jump, GameInput.InputType.Game);
+
                 tick.swap = Mathf.Abs(Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.SwapCard, GameInput.InputType.Game)) > 0.01f;
                 tick.restart = false;
                 tick.pause_and_unhook = false;
                 buffer.Write(tick);
+                if (frame_idx < 10) {
+                    LoggerInstance.Msg("recorded tick" + tick.ToString());
+                }
+                last_tick = tick;
             }
             if (replay_enabled.Value || recording_enabled.Value) {
                 ++frame_idx;
@@ -615,7 +703,7 @@ namespace NeonTAS {
             // this should also load the 'record inputs' hook / set that to load on game unpause
         }
 
-        // DEBUG SHIT, will set behind granular prefs later
+        // DEBUG SHIT
         public static GUIStyle TASInputStyle() {
             GUIStyle style = new GUIStyle();
 
@@ -652,31 +740,39 @@ namespace NeonTAS {
 
         public override void OnGUI() {
             if (!RM.mechController || !RM.drifter) return;
+            int local_y_offset = y_offset.Value;
+            DrawText(x_offset.Value, local_y_offset, "Input writes patched: " + input_write_methods_patched.ToString(), Color.magenta);
+            local_y_offset += font_size.Value + 2;
+
+            DrawText(x_offset.Value, local_y_offset, "Level Hooks:" + level_hook_methods_patched.ToString(), Color.magenta);
+            local_y_offset += font_size.Value + 2;
+
+            DrawText(x_offset.Value, local_y_offset, "Frame #" + frame_idx.ToString(), Color.magenta);
+            local_y_offset += font_size.Value + 2;
+
+            if (RM.drifter && RM.drifter.mouseLookX && RM.drifter.mouseLookY) {
+                float heading = RM.drifter.mouseLookX.RotationX;
+                float elevation = RM.drifter.mouseLookY.RotationY;
+                DrawText(x_offset.Value, local_y_offset, heading.ToString("N3") + " @ " + elevation.ToString("N3"), Color.magenta);
+                local_y_offset += font_size.Value + 2;
+            }
+
+            if (replay_enabled.Value && !delayed_record) {
+                DrawText(x_offset.Value, local_y_offset, "Replaying inputs!", Color.magenta);
+                local_y_offset += font_size.Value + 2;
+            }
+            if (recording_enabled.Value) {
+                string suffix = "";
+                if (delayed_record) suffix = " (because not replaying)";
+                DrawText(x_offset.Value, local_y_offset, "Recording!" + suffix, Color.magenta);
+                local_y_offset += font_size.Value + 2;
+            }
+
             if (debug_text.Value) {
-                int local_y_offset = y_offset.Value;
-                DrawText(x_offset.Value, local_y_offset, "Frame #" + frame_idx.ToString(), Color.magenta);
-                local_y_offset += font_size.Value + 2;
-
-                DrawText(x_offset.Value, local_y_offset, "X: " + frame_inputX.ToString("N2"), Color.magenta);
-                local_y_offset += font_size.Value + 2;
-                DrawText(x_offset.Value, local_y_offset, "Y: " + frame_inputY.ToString("N2"), Color.magenta);
-                local_y_offset += font_size.Value + 2;
-
-                string actions = "";
-                if (frame_fire_pressed) {
-                    actions += " FIRE ";
+                if (last_tick != null) {
+                    DrawText(x_offset.Value, local_y_offset, last_tick.ToString(), Color.magenta);
+                    local_y_offset += font_size.Value + 2;
                 }
-                if (frame_jump_pressed) {
-                    actions += " JUMP ";
-                }
-                if (frame_discard_pressed) {
-                    actions += " DISCARD ";
-                }
-                if (frame_swap_card) {
-                    actions += " SWAP ";
-                }
-                DrawText(x_offset.Value, local_y_offset, actions, Color.magenta);
-                local_y_offset += font_size.Value + 2;
             }
         }
     }
