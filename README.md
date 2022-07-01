@@ -1,4 +1,4 @@
-# Neon TAS
+# Neon White TAS Kit
 
 ## Installation
 
@@ -13,6 +13,8 @@ Configuration for this mod is provided by the **Mono Varient** of [Melon Prefere
 The IL2CPP version of Melon Preferences Manager will **NOT** work. You **must** use the Mono variant.
 
 ## Usage
+
+[Quick 'n' Shitty Demo Vid](https://www.youtube.com/watch?v=HbLU1PFZU2Q)
 
 The mod needs to be enabled within the Melon Preferences (default keybind `F5`) category for it. Replaying and recording can both be turned on independelty; recording inputs only happens when there are no active replays happening.
 
