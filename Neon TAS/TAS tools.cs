@@ -219,8 +219,22 @@ namespace NeonTAS {
         public static bool level_hook_methods_patched = false;
         public static bool input_write_methods_patched = false;
 
+        class DisablePBUpdating_Patch {
+            [HarmonyPatch(typeof(LevelStats), "UpdateTimeMicroseconds")]
+            [HarmonyPrefix]
+            static bool SkipUpdatingPb() {
+                return false;
+            }
+        }
+
+        static HarmonyLib.Harmony pb_disabling_instance;
+
         public override void OnApplicationStart() {
             GameDataManager.powerPrefs.dontUploadToLeaderboard = true;
+            pb_disabling_instance = new HarmonyLib.Harmony("PB Blocking");
+            pb_disabling_instance.PatchAll(typeof(DisablePBUpdating_Patch));
+
+
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
 
             // replaying requires level start/finish patches that hook/unhook input method patches
@@ -524,13 +538,13 @@ namespace NeonTAS {
 
             if (File.Exists(path)) {
                 string inputs = File.ReadAllText(path);
-                debug_string_to_write += "Read inputs from " + path + "\n";
+                MelonLogger.Msg("Read inputs from " + path + "\n");
                 frame_idx = 0;
                 buffer = new InputBuffer();
                 buffer.ParseString(inputs);
                 delayed_record = false;
             } else {
-                debug_string_to_write += "No file found at [" + path + "]. Unhooking input replaying.\n";
+                MelonLogger.Msg("No file found at [" + path + "]. Unhooking input replaying.\n");
                 UnpatchInputMethods();
                 delayed_record = true;
             }
@@ -584,16 +598,7 @@ namespace NeonTAS {
             if (copy_replay_filename_to_clipboard.Value) {
                 GUIUtility.systemCopyBuffer = filename;
             }
-            debug_string_to_write += "Recorded inputs to " + path + "\n";
-        }
-
-        public static string debug_string_to_write = "";
-
-        public override void OnUpdate() {
-            if (debug_string_to_write != "") {
-                LoggerInstance.Msg(debug_string_to_write);
-                debug_string_to_write = "";
-            }
+            MelonLogger.Msg("Recorded inputs to " + path + "\n");
         }
 
         static InputBuffer.InputTick last_tick = null;
