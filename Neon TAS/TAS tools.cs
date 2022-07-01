@@ -252,6 +252,8 @@ namespace NeonTAS {
             pb_disabling_instance = new HarmonyLib.Harmony("PB Blocking");
             pb_disabling_instance.PatchAll(typeof(DisablePBUpdating_Patch));
 
+            Application.targetFrameRate = 60;
+
 
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
             // replaying requires level start/finish patches that hook/unhook input method patches
@@ -291,10 +293,8 @@ namespace NeonTAS {
             if (debug_disable_enemy_ai.Value) {
                 DisableEnemyAi();
             }
-            Time.timeScale = timescale.Value;
         }
         public override void OnPreferencesSaved() {
-            Time.timeScale = timescale.Value;
             if (level_hook_methods_patched && !(replay_enabled.Value || recording_enabled.Value)) {
                 UnpatchLevelMethods();
             } else if (replay_enabled.Value || recording_enabled.Value) {
@@ -796,7 +796,6 @@ namespace NeonTAS {
             // gate the input feed actions on if the input methods are patched
 
             // note: maybe have a config value for a specific frame_idx to trigger the pause->hand over control on?
-
             if (replay_enabled.Value && input_write_methods_patched) {
                 ReplayInputs();
             } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
@@ -804,6 +803,15 @@ namespace NeonTAS {
             }
             if (replay_enabled.Value || recording_enabled.Value) {
                 ++frame_idx;
+            }
+        }
+
+        public override void OnUpdate() {
+            // note: when timescale fuckery is going on, stuff starts happening when waiting for level start.
+            // it resets on level start, but probably need to gate this better (e.g. not adjust timescale if timescale == 0)
+            if (RM.time != null && RM.time.GetTargetTimeScale() != 0f) {
+                RM.time.SetTargetTimescale(timescale.Value);
+                Application.targetFrameRate = (int) (60f * timescale.Value);
             }
         }
 
