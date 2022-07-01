@@ -41,10 +41,6 @@ namespace NeonTAS {
                 jump = swap = fire = discard = restart = pause_and_unhook = false;
             }
 
-            // in place of a 5-digit frame index, a ----- indicates it's just the next frame
-            // should be handy if you need to delete a frame of input
-            public static string FRAME_NEXT_PREFIX = "----->";
-
             public static InputTick FromString(string s) {
                 InputTick ret = new InputTick();
 
@@ -68,14 +64,7 @@ namespace NeonTAS {
                     return null; // invalid, skip frame.
                 }
 
-                if (frame != "")
-                    if (frame == "----->") {
-                        // ret.idx is just 'next index'
-                        // we percolate this back up by setting idx to int.MinValue :)))
-                        ret.idx = int.MinValue; //this is the worst thing i will ever do
-                    } else {
-                        ret.idx = int.Parse(frame);
-                    }
+                if (frame != "") ret.idx = int.Parse(frame);
                 if (inputs != "") {
                     parts = inputs.Split('|');
                 } else {
@@ -130,21 +119,13 @@ namespace NeonTAS {
 
                 return ret;
             }
-            public string ToString(bool print_frame = true) {
-                if (idx == -1) {
-                    return FRAME_NEXT_PREFIX;
-                }
+            public override string ToString() {
                 if (x_move_axis == null && y_move_axis == null && face_direction == null && face_angle == null &&
                     !(jump || fire || discard || swap || restart || pause_and_unhook)) {
-                    return FRAME_NEXT_PREFIX;
+                    return "";
                 }
                 // print frame#, padded to 5 digits for uniformity :)
-                string ret = "";
-                if (print_frame) {
-                    ret += idx.ToString("D5") + ">";
-                } else {
-                    ret += FRAME_NEXT_PREFIX; // means "+1 frame from last"
-                }
+                string ret = idx.ToString("D5") + ">";
                 if (x_move_axis != null) {
                     ret += x_move_axis.ToString();
                 }
@@ -192,11 +173,7 @@ namespace NeonTAS {
         }
 
         public bool Write(InputTick t) {
-            if (t.idx == int.MinValue) {
-                // this was an "unnumbered frame" composed of "----->" to indicate that
-                // its frame index is just the last one +1
-                t.idx = max_frame_idx + 1;
-            }
+            if (t == null) return false;
             if (t.idx >= 0 && t.idx < size) {
                 if (t.idx > max_frame_idx) {
                     max_frame_idx = t.idx;
@@ -553,19 +530,9 @@ namespace NeonTAS {
         public static void OnLevelWin_RecordingFinish() {
             // bad code.
             string inputs = "";
-            int prior_idx = -1;
             for (int i = 0; i < buffer.NumFrames(); i++) {
                 InputBuffer.InputTick tick = buffer.Get(i);
-                if (tick != null) {
-                    if (prior_idx == -1) {
-                        inputs += tick.ToString() + "\n";
-                    } else {
-                        inputs += tick.ToString(false) + "\n";
-                    }
-                    prior_idx = tick.idx;
-                } else {
-                    prior_idx = -1;
-                }
+                if (tick != null) inputs += tick.ToString() + "\n";
             }
             if (inputs != "") {
                 WriteStringToFile(inputs);
@@ -618,89 +585,91 @@ namespace NeonTAS {
 
         static InputBuffer.InputTick last_tick = null;
 
-        public override void OnFixedUpdate() {
-            // just gate the input feed actions on if the input methods are patched
-            if (replay_enabled.Value && input_write_methods_patched && buffer != null) {
-                InputBuffer.InputTick tick = buffer.Get(frame_idx); // nullable!
-                if (tick == null) {
-                    // do not adjust x_move_axis or y_move_axis
-                    setRotation(frame_lookX, frame_lookY);
-                    setJump(false);
-                    setFire(false);
-                    setDiscard(false);
-                    frame_swap_card = false;
-                    setRestart(false);
-                } else {
-                    if (frame_idx < 10 && tick != null) {
-                        LoggerInstance.Msg("replaying tick" + tick.ToString());
-                    }
-                    if (tick.x_move_axis != null) {
-                        frame_inputX = tick.x_move_axis.Value;
-                    }
-                    if (tick.y_move_axis != null) {
-                        frame_inputY = tick.y_move_axis.Value;
-                    }
-                    if (tick.face_direction != null) {
-                        frame_lookX = tick.face_direction.Value;
-                    }
-                    if (tick.face_angle != null) {
-                        frame_lookY = tick.face_angle.Value;
-                    }
-                    // setrotation every frame, so that if we somehow miss a frame we still try and set correctly again
-                    // is that really how it works or was it just that our flick lands a frame too early sometimes :think:
-                    setRotation(frame_lookX, frame_lookY);
-
-                    // WHY IS SETJUMP NOT WORKING ANYMORE
-                    setJump(tick.jump);
-                    setFire(tick.fire);
-                    setDiscard(tick.discard);
-                    frame_swap_card = tick.swap;
-                    setRestart(tick.restart);
-                    if (tick.pause_and_unhook) {
-                        UnpatchInputMethods();
-                        MainMenu.Instance().PauseGame(true, true, true);
-                        delayed_record = true;
-                        LoggerInstance.Msg("Unpatched methods and handed back control *on* frame " + frame_idx.ToString());
-                    }
+        public void ReplayInputs() {
+            InputBuffer.InputTick tick = buffer.Get(frame_idx); // nullable!
+            if (tick == null) {
+                // do not adjust x_move_axis or y_move_axis
+                setRotation(frame_lookX, frame_lookY);
+                setJump(false);
+                setFire(false);
+                setDiscard(false);
+                frame_swap_card = false;
+                setRestart(false);
+            } else {
+                if (tick.x_move_axis != null) {
+                    frame_inputX = tick.x_move_axis.Value;
                 }
-                last_tick = tick;
-                // will gating against replayEnabled here prevent the mystery Null References
-            } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value && RM.drifter) {
-                InputBuffer.InputTick tick = new InputBuffer.InputTick();
-                InputBuffer.InputTick last_tick= buffer.Get(frame_idx - 1); // nullable!
-                tick.idx = frame_idx;
-                tick.x_move_axis = Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.MoveHorizontal, GameInput.InputType.Game);
-                tick.y_move_axis = Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.MoveVertical,   GameInput.InputType.Game);
+                if (tick.y_move_axis != null) {
+                    frame_inputY = tick.y_move_axis.Value;
+                }
+                if (tick.face_direction != null) {
+                    frame_lookX = tick.face_direction.Value;
+                }
+                if (tick.face_angle != null) {
+                    frame_lookY = tick.face_angle.Value;
+                }
+                // setrotation every frame, so that if we somehow miss a frame we still try and set correctly again
+                // is that really how it works or was it just that our flick lands a frame too early sometimes :think:
+                setRotation(frame_lookX, frame_lookY);
 
+                setJump(tick.jump);
+                setFire(tick.fire);
+                setDiscard(tick.discard);
+                frame_swap_card = tick.swap;
+                setRestart(tick.restart);
+                if (tick.pause_and_unhook) {
+                    // make this a proper func? mayhaps?
+                    UnpatchInputMethods();
+                    MainMenu.Instance().PauseGame(true, true, true);
+                    delayed_record = true;
+                    LoggerInstance.Msg("Unpatched methods and handed back control *on* frame " + frame_idx.ToString());
+                }
+            }
+            last_tick = tick;
+        }
+
+        public void RecordInputs() {
+            InputBuffer.InputTick tick = new InputBuffer.InputTick();
+            InputBuffer.InputTick last_tick = buffer.Get(frame_idx - 1); // nullable!
+            tick.idx = frame_idx;
+            tick.x_move_axis = Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.MoveHorizontal, GameInput.InputType.Game);
+            tick.y_move_axis = Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.MoveVertical, GameInput.InputType.Game);
+
+            if (RM.drifter != null) {
+                // i don't think this can happen, but may as well just in case?
                 tick.face_direction = RM.drifter.mouseLookX.RotationX;
                 tick.face_angle = RM.drifter.mouseLookY.RotationY;
-                
-                if (last_tick != null) {
-                    if (last_tick.x_move_axis == tick.x_move_axis) tick.x_move_axis = null;
-                    if (last_tick.y_move_axis == tick.y_move_axis) tick.y_move_axis = null;
-                    if (last_tick.face_direction == tick.face_direction) tick.face_direction = null;
-                    if (last_tick.face_angle == tick.face_angle) tick.face_angle = null;
-                }
+            }
 
-                
-                tick.fire = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCard, GameInput.InputType.Game);
-                tick.discard = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCardAlt, GameInput.InputType.Game);
-                tick.jump = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.Jump, GameInput.InputType.Game);
+            if (last_tick != null) {
+                if (last_tick.x_move_axis == tick.x_move_axis) tick.x_move_axis = null;
+                if (last_tick.y_move_axis == tick.y_move_axis) tick.y_move_axis = null;
+                if (last_tick.face_direction == tick.face_direction) tick.face_direction = null;
+                if (last_tick.face_angle == tick.face_angle) tick.face_angle = null;
+            }
 
-                tick.swap = Mathf.Abs(Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.SwapCard, GameInput.InputType.Game)) > 0.01f;
-                tick.restart = false;
-                tick.pause_and_unhook = false;
-                buffer.Write(tick);
-                if (frame_idx < 10) {
-                    LoggerInstance.Msg("recorded tick" + tick.ToString());
-                }
-                last_tick = tick;
+
+            tick.fire = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCard, GameInput.InputType.Game);
+            tick.discard = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCardAlt, GameInput.InputType.Game);
+            tick.jump = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.Jump, GameInput.InputType.Game);
+
+            tick.swap = Mathf.Abs(Singleton<GameInput>.Instance.GetAxis(GameInput.GameActions.SwapCard, GameInput.InputType.Game)) > 0.01f;
+            tick.restart = false;
+            tick.pause_and_unhook = false;
+            buffer.Write(tick);
+            last_tick = tick;
+        }
+
+        public override void OnFixedUpdate() {
+            // gate the input feed actions on if the input methods are patched
+            if (replay_enabled.Value && input_write_methods_patched && buffer != null) {
+                ReplayInputs();
+            } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
+                RecordInputs();
             }
             if (replay_enabled.Value || recording_enabled.Value) {
                 ++frame_idx;
             }
-            // note: should have a keyword/action for 'pause game and hand back input control to user
-            // this should also load the 'record inputs' hook / set that to load on game unpause
         }
 
         // DEBUG SHIT
