@@ -240,20 +240,18 @@ namespace NeonTAS {
         class DisablePBUpdating_Patch {
             [HarmonyPatch(typeof(LevelStats), "UpdateTimeMicroseconds")]
             [HarmonyPrefix]
-            static bool SkipUpdatingPb() {
+            static bool SkipUpdatingPb(LevelStats __instance, long newTime) {
+                __instance._timeLastMicroseconds = newTime;
                 return false;
             }
         }
 
         static HarmonyLib.Harmony pb_disabling_instance;
 
-        public override void OnApplicationStart() {
+        public override void OnApplicationLateStart() {
             GameDataManager.powerPrefs.dontUploadToLeaderboard = true;
             pb_disabling_instance = new HarmonyLib.Harmony("PB Blocking");
             pb_disabling_instance.PatchAll(typeof(DisablePBUpdating_Patch));
-
-            Application.targetFrameRate = 60;
-
 
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
             // replaying requires level start/finish patches that hook/unhook input method patches
