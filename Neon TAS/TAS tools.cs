@@ -216,24 +216,6 @@ namespace NeonTAS {
         public static MelonPreferences_Entry<int> y_offset;
         public static MelonPreferences_Entry<int> font_size;
 
-        public static MelonPreferences_Category misc_debug_shit;
-        public static MelonPreferences_Entry<bool> debug_disable_enemy_ai;
-
-        public static MelonPreferences_Entry<bool> disable_frog;
-        public static MelonPreferences_Entry<bool> disable_jock;
-        public static MelonPreferences_Entry<bool> disable_jumper;
-        public static MelonPreferences_Entry<bool> disable_guardian;
-        public static MelonPreferences_Entry<bool> disable_ringer;
-        public static MelonPreferences_Entry<bool> disable_shocker;
-        public static MelonPreferences_Entry<bool> disable_mimic;
-
-        public static MelonPreferences_Entry<bool> disable_barnacle;
-        public static MelonPreferences_Entry<bool> disable_ufo;
-        public static MelonPreferences_Entry<bool> disable_boxer;
-        public static MelonPreferences_Entry<bool> disable_roller;
-
-
-        public static bool prior_dont_upload_val;
         public static bool level_hook_methods_patched = false;
         public static bool input_write_methods_patched = false;
 
@@ -247,11 +229,14 @@ namespace NeonTAS {
         }
 
         static HarmonyLib.Harmony pb_disabling_instance;
+        static HarmonyLib.Harmony tick_hook_instance;
 
         public override void OnApplicationLateStart() {
             GameDataManager.powerPrefs.dontUploadToLeaderboard = true;
             pb_disabling_instance = new HarmonyLib.Harmony("PB Blocking");
             pb_disabling_instance.PatchAll(typeof(DisablePBUpdating_Patch));
+            tick_hook_instance = new HarmonyLib.Harmony("tick hooks");
+            tick_hook_instance.PatchAll(typeof(PlayerTickYeehawPatch));
 
             tas_config = MelonPreferences.CreateCategory("TAS Tools");
             // replaying requires level start/finish patches that hook/unhook input method patches
@@ -270,26 +255,8 @@ namespace NeonTAS {
             y_offset = tas_config.CreateEntry("Y Offset", 30);
             font_size = tas_config.CreateEntry("Font Size", 20);
 
-            misc_debug_shit = MelonPreferences.CreateCategory("Misc. Debug");
-            debug_disable_enemy_ai = misc_debug_shit.CreateEntry("DEBUG: disable enemy AI", false);
-            disable_barnacle = misc_debug_shit.CreateEntry("Disable 'Barnacle' (basic imp)", true);
-            disable_frog = misc_debug_shit.CreateEntry("Disable Frog (yellow)", true);
-            disable_jock = misc_debug_shit.CreateEntry("Disable Jock (blue)", true);
-            disable_jumper = misc_debug_shit.CreateEntry("Disable Jumper (green)", true);
-            disable_guardian = misc_debug_shit.CreateEntry("Disable Guardian", true);
-            disable_ringer = misc_debug_shit.CreateEntry("Disable Ringer (blob)", true);
-            disable_shocker = misc_debug_shit.CreateEntry("Disable Shocker", true);
-            disable_mimic = misc_debug_shit.CreateEntry("Disable Mimic", true);
-
-            disable_ufo = misc_debug_shit.CreateEntry("Disable 'ufo'?", true);
-            disable_boxer = misc_debug_shit.CreateEntry("Disable 'boxer'?", true);
-            disable_roller = misc_debug_shit.CreateEntry("Disable 'roller'?", true);
-
             if (replay_enabled.Value || recording_enabled.Value) {
                 PatchLevelMethods();
-            }
-            if (debug_disable_enemy_ai.Value) {
-                DisableEnemyAi();
             }
         }
         public override void OnPreferencesSaved() {
@@ -300,76 +267,6 @@ namespace NeonTAS {
             }
             if (input_write_methods_patched && !replay_enabled.Value) {
                 UnpatchInputMethods();
-            }
-            if (debug_disable_enemy_ai.Value) {
-                DisableEnemyAi();
-            } else {
-                EnableEnemyAi();
-            }
-        }
-
-        public static bool enemies_patched = false;
-        static HarmonyLib.Harmony enemy_patch_instance = new HarmonyLib.Harmony("enemies");
-
-        class EnemyAI_Patch {
-            [HarmonyPatch(typeof(Enemy), "OnUpdate")]
-            [HarmonyPrefix]
-            // the preference is for "disable", e.g. true == no AI
-            // returning true will make enemy .OnUpdate() still tick for that type.
-            // so, we need to return !value
-            static bool BlockEnemyAI(Enemy __instance) {
-                switch(__instance.GetEnemyType()) {
-                    case Enemy.Type.shocker: {
-                        return !disable_shocker.Value;
-                    }
-                    case Enemy.Type.barnacle: {
-                        return !disable_barnacle.Value;
-                    }
-                    case Enemy.Type.frog: {
-                        return !disable_frog.Value;
-                    }
-                    case Enemy.Type.jock: {
-                        return !disable_jock.Value;
-                    }
-                    case Enemy.Type.jumper: {
-                        return !disable_jumper.Value;
-                    }
-                    case Enemy.Type.guardian: {
-                        return !disable_guardian.Value;
-                    }
-                    case Enemy.Type.ringer: {
-                        return !disable_ringer.Value;
-                    }
-                    case Enemy.Type.mimic: {
-                        return !disable_mimic.Value;
-                    }
-                    case Enemy.Type.ufo: {
-                        return !disable_ufo.Value;
-                    }
-                    case Enemy.Type.boxer: {
-                        return !disable_boxer.Value;
-                    }
-                    case Enemy.Type.roller: {
-                        return !disable_mimic.Value;
-                    }
-                    default: {
-                        // fallback: who is still enabled?
-                        return true;
-                    }
-                }
-            }
-        }
-
-        public void DisableEnemyAi() {
-            if (!enemies_patched) {
-                enemy_patch_instance.PatchAll(typeof(EnemyAI_Patch));
-                enemies_patched = true;
-            }
-        }
-        public void EnableEnemyAi() {
-            if (enemies_patched) {
-                enemy_patch_instance.UnpatchSelf();
-                enemies_patched = false;
             }
         }
 
@@ -443,6 +340,25 @@ namespace NeonTAS {
             if (input_write_methods_patched) {
                 input_patches_instance.UnpatchSelf();
                 input_write_methods_patched = false;
+            }
+        }
+
+        class PlayerTickYeehawPatch {
+            // unilaterally applied hook. Use with care, gate calls appropriately.
+            [HarmonyPatch(typeof(FirstPersonDrifter), "UpdateVelocity")]
+            [HarmonyPrefix]
+            static void UpdateInputValuesForTick() {
+                // note: could potentially grab the currentVelocity before/after each step and log that in the recording file
+                // || position etc. idk. would only be handy for debug shit.
+                // gate the input feed actions on if the input methods are patched
+                if (replay_enabled.Value && input_write_methods_patched) {
+                    ReplayInputs();
+                } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
+                    RecordInputs();
+                }
+                if (replay_enabled.Value || recording_enabled.Value) {
+                    ++frame_idx;
+                }
             }
         }
 
@@ -596,27 +512,27 @@ namespace NeonTAS {
 
         public static bool delayed_record = false;
 
-        public void setJump(bool v) {
+        public static void setJump(bool v) {
             last_frame_jump_pressed = frame_jump_pressed;
             frame_jump_pressed = v;
         }
 
-        public void setFire(bool v) {
+        public static void setFire(bool v) {
             last_frame_fire_pressed = frame_fire_pressed;
             frame_fire_pressed = v;
         }
 
-        public void setDiscard(bool v) {
+        public static void setDiscard(bool v) {
             last_frame_discard_pressed = frame_discard_pressed;
             frame_discard_pressed = v;
         }
 
-        public void setRestart(bool v) {
+        public static void setRestart(bool v) {
             last_frame_restart_pressed = frame_restart_pressed;
             frame_restart_pressed = v;
         }
 
-        public void setRotation(float? x, float? y) {
+        public static void setRotation(float? x, float? y) {
             if (x.HasValue) {
                 float clamped_x = x.Value % 360;
                 RM.drifter.mouseLookX.SetRotationX(clamped_x);
@@ -713,7 +629,7 @@ namespace NeonTAS {
 
         static InputBuffer.InputTick last_tick = null;
 
-        public void ReplayInputs() {
+        public static void ReplayInputs() {
             if (buffer == null) return;
             InputBuffer.InputTick tick = buffer.Get(frame_idx); // nullable!
             if (tick == null) {
@@ -751,13 +667,13 @@ namespace NeonTAS {
                     UnpatchInputMethods();
                     MainMenu.Instance().PauseGame(true, true, true);
                     delayed_record = true;
-                    LoggerInstance.Msg("Unpatched methods and handed back control *on* frame " + frame_idx.ToString());
+                    MelonLogger.Msg("Unpatched methods and handed back control *on* frame " + frame_idx.ToString());
                 }
             }
             last_tick = tick;
         }
 
-        public void RecordInputs() {
+        public static void RecordInputs() {
             if (buffer == null) return;
             InputBuffer.InputTick tick = new InputBuffer.InputTick();
             InputBuffer.InputTick last_tick = buffer.Get(frame_idx - 1); // nullable!
@@ -778,7 +694,6 @@ namespace NeonTAS {
                 if (last_tick.face_angle == tick.face_angle) tick.face_angle = null;
             }
 
-
             tick.fire = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCard, GameInput.InputType.Game);
             tick.discard = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.FireCardAlt, GameInput.InputType.Game);
             tick.jump = Singleton<GameInput>.Instance.GetButton(GameInput.GameActions.Jump, GameInput.InputType.Game);
@@ -788,20 +703,6 @@ namespace NeonTAS {
             tick.pause_and_unhook = false;
             buffer.Write(tick);
             last_tick = tick;
-        }
-
-        public override void OnFixedUpdate() {
-            // gate the input feed actions on if the input methods are patched
-
-            // note: maybe have a config value for a specific frame_idx to trigger the pause->hand over control on?
-            if (replay_enabled.Value && input_write_methods_patched) {
-                ReplayInputs();
-            } else if ((!replay_enabled.Value || delayed_record) && recording_enabled.Value) {
-                RecordInputs();
-            }
-            if (replay_enabled.Value || recording_enabled.Value) {
-                ++frame_idx;
-            }
         }
 
         public override void OnUpdate() {

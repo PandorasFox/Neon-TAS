@@ -38,6 +38,6 @@ using NeonTAS;
 [assembly: AssemblyVersion("1.0.0.0")]
 [assembly: AssemblyFileVersion("1.0.0.0")]
 
-[assembly: MelonInfo(typeof(TAS_tools), "Neon TAS", "1.0.2", "Pandora's Fox")]
+[assembly: MelonInfo(typeof(TAS_tools), "Neon TAS", "1.1.0", "Pandora's Fox")]
 [assembly: MelonGame("Little Flag Software, LLC", "Neon White")]
 [assembly: HarmonyDontPatchAll]
